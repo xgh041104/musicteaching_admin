@@ -1,7 +1,10 @@
-/storage/
+storage/logs
 .idea
 *.log
+deploy/docker-compose/conf
+deploy/docker-compose/data
 
 *.exe
+resource/
 
-/Resources/
+static/**

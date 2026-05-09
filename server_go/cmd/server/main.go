@@ -1,25 +1,30 @@
 package main
 
 import (
+	"ai_summary_project/cmd/server/wire"
+	"ai_summary_project/pkg/config"
+	"ai_summary_project/pkg/log"
+	"context"
+	"flag"
 	"fmt"
-	"server_go/pkg/config"
-	"server_go/pkg/http"
-	"server_go/pkg/log"
-
 	"go.uber.org/zap"
+	_ "gorm.io/driver/mysql"
 )
 
 func main() {
-	conf := config.NewConfig()
+	var envConf = flag.String("conf", "config/local.yml", "config path, eg: -conf ./config/local.yml")
+	flag.Parse()
+	conf := config.NewConfig(*envConf)
+
 	logger := log.NewLog(conf)
 
-	logger.Info("server start", zap.String("host", "http://127.0.0.1:"+conf.GetString("http.port")))
-
-	app, cleanup, err := newApp(conf, logger)
+	app, cleanup, err := wire.NewWire(conf, logger)
+	defer cleanup()
 	if err != nil {
 		panic(err)
 	}
-	defer cleanup()
-
-	http.Run(app, fmt.Sprintf(":%d", conf.GetInt("http.port")))
+	logger.Info("server start", zap.String("host", fmt.Sprintf("http://%s:%d", conf.GetString("http.host"), conf.GetInt("http.port"))))
+	if err = app.Run(context.Background()); err != nil {
+		panic(err)
+	}
 }

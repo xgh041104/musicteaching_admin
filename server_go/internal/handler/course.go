@@ -1,311 +1,167 @@
 package handler
 
 import (
-	"encoding/json"
-	"net/http"
-	"server_go/internal/model"
-	"server_go/internal/service"
-	"server_go/pkg/helper/resp"
-
+	v1 "ai_summary_project/api/v1"
+	"ai_summary_project/internal/service"
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
+	"mime/multipart"
+	"net/http"
+	"strconv"
+	"time"
 )
 
 type CourseHandler interface {
-	AddCourse(ctx *gin.Context)
-	EditCourse(ctx *gin.Context)
-	DelCourse(ctx *gin.Context)
-	QueryCourse(ctx *gin.Context)
-	QueryCourseByCategoryId(ctx *gin.Context)
-	QueryCourseDirectory(ctx *gin.Context)
-	CollectCourse(ctx *gin.Context)
-	QueryCourseIsCollected(ctx *gin.Context)
-	QueryPaidCourse(ctx *gin.Context)
-	QueryCollectCourse(ctx *gin.Context)
-	QueryPublicCourse(ctx *gin.Context)
-	QuerySchoolCourse(ctx *gin.Context)
-	QueryMyCourse(ctx *gin.Context)
+	UploadCourse(ctx *gin.Context)
+	GetCoursesByBookID(ctx *gin.Context)
+	DeleteCourse(ctx *gin.Context)
+	GetBooks(ctx *gin.Context)
 }
 
 type courseHandler struct {
 	*Handler
-	courseService service.CourseService
+	courseService service.CourseService // 服务层结构引入
 }
 
-func NewCourseHandler(handler *Handler, courseService service.CourseService) CourseHandler {
+func NewCourseHandler(
+	handler *Handler,
+	courseService service.CourseService,
+) CourseHandler {
 	return &courseHandler{
 		Handler:       handler,
-		courseService: courseService,
+		courseService: courseService, // 服务层结构引入
 	}
 }
 
-func (h *courseHandler) AddCourse(ctx *gin.Context) {
-
-	files, _ := ctx.MultipartForm() // 获取fromdata的文件
-
-	data, _ := ctx.GetPostForm("data") // 获取fromdata的文件
-
-	var courseparam model.Course
-
-	json.Unmarshal([]byte(data), &courseparam)
-
-	err := h.courseService.AddCourse(courseparam, files)
-
-	if err != nil {
-		resp.HandleError(ctx, http.StatusBadRequest, 1, err.Error(), nil)
+// POST /courses/upload
+func (h *courseHandler) UploadCourse(ctx *gin.Context) {
+	var req v1.UploadCourseRequest
+	if err := ctx.ShouldBind(&req); err != nil {
+		h.logger.Warn("UploadCourse", zap.Any("error", err))
+		v1.HandleError(ctx, http.StatusBadRequest, err, nil)
 		return
-
 	}
-	resp.HandleSuccess(ctx, nil)
+	h.logger.Info("Enter uploadCourse", zap.Any("BookID", req.BookID))
+	var (
+		mp4Header *multipart.FileHeader
+		err       error
+	)
+	if req.Type == 1 {
+		if mp4Header, err = ctx.FormFile("video"); err != nil {
+			h.logger.Error("video get error", zap.Any("error", err))
+			v1.HandleError(ctx, http.StatusBadRequest, err, nil)
+			return
+		}
+	}
+	mp3Header, err := ctx.FormFile("audio")
+	if err != nil {
+		v1.HandleError(ctx, http.StatusBadRequest, err, nil)
+		return
+	}
+	summary, err := h.courseService.GenerateSummaryFromAudio(ctx, mp3Header, req.Title)
+	if err != nil {
+		v1.HandleError(ctx, http.StatusBadRequest, err, nil)
+		return
+	}
+	if req.Type == 1 {
+		if err := h.courseService.CreateCourseWithFiles(
+			ctx, req.BookID, req.Title, summary,
+			mp4Header, mp3Header,
+		); err != nil {
+			h.logger.Error("UploadCourse", zap.Any("error", err))
+			v1.HandleError(ctx, http.StatusInternalServerError, err, nil)
+			return
+		}
+	}
 
+	v1.HandleSuccess(ctx, summary)
 }
 
-func (h *courseHandler) EditCourse(ctx *gin.Context) {
-	files, _ := ctx.MultipartForm() // 获取fromdata的文件
-
-	data, _ := ctx.GetPostForm("data") // 获取fromdata的文件
-
-	var courseparam model.Course
-
-	json.Unmarshal([]byte(data), &courseparam)
-
-	err := h.courseService.EditCourse(courseparam, files)
-
+// GET /courses/:id
+func (h *courseHandler) GetCoursesByBookID(ctx *gin.Context) {
+	idStr := ctx.Param("id")
+	bookID, err := strconv.ParseUint(idStr, 10, 64)
 	if err != nil {
-		resp.HandleError(ctx, http.StatusBadRequest, 1, err.Error(), nil)
+		h.logger.Error("GetCoursesByBookID Error!", zap.Any("error", err))
+		v1.HandleError(ctx, http.StatusBadRequest, v1.ErrInvalidBookID, nil)
 		return
-
 	}
-	resp.HandleSuccess(ctx, nil)
+	h.logger.Info("GetCoursesByBookID", zap.Any("bookID", bookID))
+	courses, err := h.courseService.GetCoursesByBookID(ctx, uint(bookID))
+	if err != nil {
+		h.logger.Error("GetCoursesByBookID Error!", zap.Any("error", err))
+		v1.HandleError(ctx, http.StatusInternalServerError, v1.ErrQueryCoursesFailed, nil)
+		return
+	}
+
+	records := make([]v1.CourseRecord, 0, len(courses))
+	for _, course := range courses {
+		records = append(records, v1.CourseRecord{
+			CourseID: course.ID,
+			Title:    course.Title,
+			Summary:  course.Summary,
+			Video:    course.VideoPath,
+			Record:   course.RecordPath,
+			CreateAt: course.CreatedAt.Format("2006-01-02 15:04"),
+		})
+	}
+
+	v1.HandleSuccess(ctx, v1.CourseListResponse{
+		Total:   len(records),
+		Records: records,
+	})
 }
 
-func (h *courseHandler) DelCourse(ctx *gin.Context) {
-	var courseparam model.Course
-	if err := ctx.ShouldBind(&courseparam); err != nil {
-		resp.HandleError(ctx, http.StatusBadRequest, 1, err.Error(), nil)
+// DELETE /courses/:id
+func (h *courseHandler) DeleteCourse(ctx *gin.Context) {
+	idStr := ctx.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		h.logger.Error("DeleteCourse Error!", zap.Any("error", err))
+		v1.HandleError(ctx, http.StatusBadRequest, v1.ErrInvalidCourseID, nil)
+		return
+	}
+	h.logger.Info("DeleteCourse", zap.Any("id", id))
+	if err := h.courseService.DeleteCourse(ctx, uint(id)); err != nil {
+		h.logger.Error("DeleteCourse Error!", zap.Any("error", err))
+		v1.HandleError(ctx, http.StatusInternalServerError, v1.ErrDeleteCourseFailed, nil)
 		return
 	}
 
-	err := h.courseService.DelCourse(courseparam)
-	if err != nil {
-		resp.HandleError(ctx, http.StatusInternalServerError, 1, err.Error(), nil)
-		return
-	}
-	resp.HandleSuccess(ctx, nil)
+	v1.HandleSuccess(ctx, nil)
 }
 
-func (h *courseHandler) QueryCourse(ctx *gin.Context) {
-	var params struct {
-		SchoolId             int `form:"schoolId" ` // 请求参数 schoolId，
-		LecturerCommonUserId int `form:"lecturerCommonUserId" `
-	}
-	if err := ctx.ShouldBind(&params); err != nil {
-		resp.HandleError(ctx, http.StatusBadRequest, 1, err.Error(), nil)
+// GET /books
+func (h *courseHandler) GetBooks(ctx *gin.Context) {
+	books, err := h.courseService.GetAllBooks(ctx)
+	if err != nil {
+		h.logger.Error("GetBooks Error!", zap.Any("error", err))
+		v1.HandleError(ctx, http.StatusInternalServerError, v1.ErrQueryBooksFailed, nil)
 		return
+	}
+	h.logger.Info("Books Information")
+	records := make([]v1.BookRecord, 0, len(books))
+	for _, book := range books {
+		records = append(records, v1.BookRecord{
+			BookID:      book.ID,
+			BookName:    book.BookName,
+			CourseCount: book.CourseCount,
+			CreateAt:    book.CreatedAt.Format("2006-1-2 15:04"),
+			UpdateAt:    book.UpdatedAt.Format("2006-1-2 15:04"),
+			DeleteAt:    formatNullableTime(book.DeletedAt),
+		})
 	}
 
-	data, err := h.courseService.QueryCourse(params.SchoolId, params.LecturerCommonUserId)
-	if err != nil {
-		resp.HandleError(ctx, http.StatusInternalServerError, 1, err.Error(), data)
-		return
-	}
-	resp.HandleSuccess(ctx, data)
+	v1.HandleSuccess(ctx, v1.BookListResponse{
+		Total:   len(records),
+		Records: records,
+	})
 }
 
-func (h *courseHandler) QueryCourseDirectory(ctx *gin.Context) {
-	var params struct {
-		CourseId   int `form:"courseId" ` // 请求参数 schoolId，
-		CommUserId int `form:"commUserId" `
+// 私有工具函数：格式化删除时间
+func formatNullableTime(t *time.Time) interface{} {
+	if t == nil {
+		return nil
 	}
-	if err := ctx.ShouldBind(&params); err != nil {
-		resp.HandleError(ctx, http.StatusBadRequest, 1, err.Error(), nil)
-		return
-	}
-
-	schoolIdInterface, _ := ctx.Get("schoolId")
-	schoolId, _ := schoolIdInterface.(int)
-
-	data, err := h.courseService.QueryCourseDirectory(params.CourseId, params.CommUserId, schoolId)
-	if err != nil {
-		resp.HandleError(ctx, http.StatusInternalServerError, 1, err.Error(), data)
-		return
-	}
-	resp.HandleSuccess(ctx, data)
-}
-
-func (h *courseHandler) QueryCourseByCategoryId(ctx *gin.Context) {
-	var params struct {
-		SchoolId             int    `form:"schoolId" ` // 请求参数 schoolId
-		TrueSchoolId         int    `form:"trueSchoolId" `
-		LecturerCommonUserId int    `form:"lecturerCommonUserId" `
-		Page                 int    `form:"page" `
-		PageSize             int    `form:"pageSize" `
-		TitleWords           string `form:"titleWords" `
-		CategoryId           int    `form:"categoryId" `
-		UserId               int    `form:"userId" `
-	}
-	if err := ctx.ShouldBind(&params); err != nil {
-		resp.HandleError(ctx, http.StatusBadRequest, 1, err.Error(), nil)
-		return
-	}
-
-	data, err := h.courseService.QueryCourseByCategoryId(params.SchoolId, params.LecturerCommonUserId, params.Page, params.PageSize, params.CategoryId, params.TitleWords, params.TrueSchoolId, params.UserId)
-	if err != nil {
-		resp.HandleError(ctx, http.StatusInternalServerError, 1, err.Error(), data)
-		return
-	}
-	resp.HandleSuccess(ctx, data)
-}
-
-func (h *courseHandler) CollectCourse(ctx *gin.Context) {
-	var params struct {
-		UserId    int  `json:"userId"`
-		CourseId  int  `json:"courseId"`
-		IsCollect bool `json:"isCollect"`
-	}
-
-	if err := ctx.ShouldBindJSON(&params); err != nil {
-		resp.HandleError(ctx, http.StatusBadRequest, 1, err.Error(), nil)
-		return
-	}
-
-	err := h.courseService.CollectCourse(params.CourseId, params.UserId, params.IsCollect)
-
-	if err != nil {
-		resp.HandleError(ctx, http.StatusInternalServerError, 1, err.Error(), nil)
-		return
-	}
-
-	resp.HandleSuccess(ctx, nil)
-}
-
-func (h *courseHandler) QueryCourseIsCollected(ctx *gin.Context) {
-	var params struct {
-		UserId   int `form:"userId"`
-		CourseId int `form:"courseId"`
-	}
-
-	if err := ctx.ShouldBind(&params); err != nil {
-		resp.HandleError(ctx, http.StatusBadRequest, 1, err.Error(), nil)
-		return
-	}
-
-	isCollected, err := h.courseService.QueryCourseIsCollected(params.CourseId, params.UserId)
-
-	if err != nil {
-		resp.HandleError(ctx, http.StatusInternalServerError, 1, err.Error(), nil)
-		return
-	}
-
-	resp.HandleSuccess(ctx, isCollected)
-}
-
-func (h *courseHandler) QueryPaidCourse(ctx *gin.Context) {
-	data, err := h.courseService.QueryPaidCourse()
-	if err != nil {
-		resp.HandleError(ctx, http.StatusInternalServerError, 1, err.Error(), nil)
-		return
-	}
-
-	resp.HandleSuccess(ctx, data)
-}
-
-func (h *courseHandler) QueryCollectCourse(ctx *gin.Context) {
-	var params struct {
-		UserId     int    `form:"userId"`
-		SchoolId   int    `form:"schoolId"`
-		Page       int    `form:"page"`
-		PageSize   int    `form:"pageSize"`
-		TitleWords string `form:"titleWords"`
-	}
-
-	if err := ctx.ShouldBind(&params); err != nil {
-		resp.HandleError(ctx, http.StatusBadRequest, 1, err.Error(), nil)
-		return
-	}
-
-	data, err := h.courseService.QueryCollectCourse(params.UserId, params.SchoolId, params.Page, params.PageSize, params.TitleWords)
-
-	if err != nil {
-		resp.HandleError(ctx, http.StatusInternalServerError, 1, err.Error(), nil)
-		return
-	}
-
-	resp.HandleSuccess(ctx, data)
-}
-
-// 查询个人课程(含收藏课程)
-func (h *courseHandler) QueryMyCourse(ctx *gin.Context) {
-	var params struct {
-		UserId     int    `form:"userId"`
-		SchoolId   int    `form:"schoolId"`
-		Page       int    `form:"page"`
-		PageSize   int    `form:"pageSize"`
-		TitleWords string `form:"titleWords"`
-		CategoryId int    `form:"categoryId"`
-	}
-
-	if err := ctx.ShouldBind(&params); err != nil {
-		resp.HandleError(ctx, http.StatusBadRequest, 1, err.Error(), nil)
-		return
-	}
-
-	data, err := h.courseService.QueryMyCourse(params.UserId, params.SchoolId, params.Page, params.PageSize, params.TitleWords, params.CategoryId)
-
-	if err != nil {
-		resp.HandleError(ctx, http.StatusInternalServerError, 1, err.Error(), nil)
-		return
-	}
-
-	resp.HandleSuccess(ctx, data)
-}
-
-// 查询公共课程(不含收费)
-func (h *courseHandler) QueryPublicCourse(ctx *gin.Context) {
-	var params struct {
-		UserId     int    `form:"userId"`
-		Page       int    `form:"page"`
-		PageSize   int    `form:"pageSize"`
-		TitleWords string `form:"titleWords"`
-		CategoryId int    `form:"categoryId"`
-	}
-
-	if err := ctx.ShouldBind(&params); err != nil {
-		resp.HandleError(ctx, http.StatusBadRequest, 1, err.Error(), nil)
-		return
-	}
-
-	data, err := h.courseService.QueryPublicCourse(params.UserId, params.Page, params.PageSize, params.TitleWords, params.CategoryId)
-
-	if err != nil {
-		resp.HandleError(ctx, http.StatusInternalServerError, 1, err.Error(), nil)
-		return
-	}
-
-	resp.HandleSuccess(ctx, data)
-}
-
-// 查询学校课程(含付费公共课程)
-func (h *courseHandler) QuerySchoolCourse(ctx *gin.Context) {
-	var params struct {
-		UserId     int    `form:"userId"`
-		SchoolId   int    `form:"schoolId"`
-		Page       int    `form:"page"`
-		PageSize   int    `form:"pageSize"`
-		TitleWords string `form:"titleWords"`
-		CategoryId int    `form:"categoryId"`
-	}
-
-	if err := ctx.ShouldBind(&params); err != nil {
-		resp.HandleError(ctx, http.StatusBadRequest, 1, err.Error(), nil)
-		return
-	}
-
-	data, err := h.courseService.QuerySchoolCourse(params.UserId, params.SchoolId, params.Page, params.PageSize, params.TitleWords, params.CategoryId)
-
-	if err != nil {
-		resp.HandleError(ctx, http.StatusInternalServerError, 1, err.Error(), nil)
-		return
-	}
-
-	resp.HandleSuccess(ctx, data)
+	return t.Format("2006-1-2 15:04")
 }

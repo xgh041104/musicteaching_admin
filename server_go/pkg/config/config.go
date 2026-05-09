@@ -1,27 +1,20 @@
 package config
 
 import (
-	"flag"
 	"fmt"
-	"os"
-
 	"github.com/spf13/viper"
+	"os"
 )
 
-func NewConfig() *viper.Viper {
-	//envConf := common.PublicPath + "config/local.yml"
+func NewConfig(p string) *viper.Viper {
 	envConf := os.Getenv("APP_CONF")
 	if envConf == "" {
-		flag.StringVar(&envConf, "conf", "config/local.yml", "config path, eg: -conf config/local.yml")
-		flag.Parse()
-	}
-	if envConf == "" {
-		envConf = "config/local.yml"
+		envConf = p
 	}
 	fmt.Println("load conf file:", envConf)
 	return getConfig(envConf)
-
 }
+
 func getConfig(path string) *viper.Viper {
 	conf := viper.New()
 	conf.SetConfigFile(path)
