@@ -12,7 +12,7 @@ security:
 data:
   db:
     driver: mysql
-    dsn: root:123456@tcp(127.0.0.1:3306)/music_teaching?charset=utf8mb4&parseTime=True&loc=Local
+    dsn: 2kD53tTw52BxLkF.root:NoB7h2fX24c3LhBQ@tcp(gateway01.ap-southeast-1.prod.aws.tidbcloud.com:4000)/subjectcourse?charset=utf8mb4&parseTime=True&loc=Local&tls=true
   redis:
     addr: 127.0.0.1:6350
     password: ""
