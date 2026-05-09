@@ -13,7 +13,7 @@ WORKDIR /service
 
 RUN apt update && \
     apt -y upgrade && \
-    apt-get install -y ffmpeg openjdk-8-jdk libreoffice p7zip-full p7zip-rar && \
+    apt-get install -y ffmpeg openjdk-8-jdk libreoffice p7zip-full && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/server_go /service/server_go
