@@ -1,30 +1,23 @@
+FROM golang:1.23 AS builder
 
-FROM  ubuntu:latest
+WORKDIR /app
+COPY ./server_go/go.mod ./server_go/go.sum ./
+RUN go mod download
+
+COPY ./server_go ./
+RUN cd cmd/server && GOOS=linux go build -o /app/server_go
+
+FROM ubuntu:latest
 EXPOSE 7890
 WORKDIR /service
-COPY ./deploy/bin/server_go /service/server_go 
-COPY ./deploy/bin/config/ /service/config/ 
-COPY ./deploy/bin/Resources /service/Resources
- 
-RUN apt update
-RUN apt -y upgrade
-RUN apt-get install -y ffmpeg
 
-RUN apt-get install -y openjdk-8-jdk
-RUN apt install -y libreoffice
-RUN apt install -y p7zip-full p7zip-rar
+RUN apt update && \
+    apt -y upgrade && \
+    apt-get install -y ffmpeg openjdk-8-jdk libreoffice p7zip-full p7zip-rar && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/server_go /service/server_go
+COPY ./server_go/config/ /service/config/
+COPY ./server_go/Resources /service/Resources
+
 CMD ["/service/server_go"]
-
-
-# FROM ubuntu:latest
-# RUN apt-get update && \
-#     apt-get install -y ffmpeg
-# # 设置容器启动时执行的命令
-# CMD [ "ffmpeg", "-version" ]
-
-
-
-
-
-
-
