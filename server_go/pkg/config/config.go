@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/spf13/viper"
 	"os"
+	"strings"
 )
 
 func NewConfig(p string) *viper.Viper {
@@ -18,6 +19,11 @@ func NewConfig(p string) *viper.Viper {
 func getConfig(path string) *viper.Viper {
 	conf := viper.New()
 	conf.SetConfigFile(path)
+
+	// Support environment variable overrides
+	conf.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	conf.AutomaticEnv()
+
 	err := conf.ReadInConfig()
 	if err != nil {
 		panic(err)
