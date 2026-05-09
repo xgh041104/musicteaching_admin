@@ -13,7 +13,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/gin-gonic/gin"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -23,6 +22,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 // ----------------- 旧AI总结接口鉴权参数 -------------------
@@ -35,9 +36,9 @@ const (
 
 // ----------------- 新语音转写接口鉴权参数 -------------------
 const (
-	newAppID      = "8c782774"
-	newApiKey     = "ed6f9d8c44dc6331f7f8e871906227c7"
-	newApiSecret  = "MzBlMWEyYjY5YTc1ZjlmODQ2N2JlOTA4"
+	newAppID      = "47463278"
+	newApiKey     = "1e025e332a1ff97610002c0f90dfcf88"
+	newApiSecret  = "Yjk2OTg4MDQ1ZDAwMmMwOWNjYTYzOTJi"
 	uploadBaseURL = "https://upload-ost-api.xfyun.cn/file"
 	openBaseURL   = "https://ost-api.xfyun.cn/v2"
 	sliceSize     = 15 * 1024 * 1024 // 15MB
