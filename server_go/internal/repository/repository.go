@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"ai_summary_project/internal/model"
 	"ai_summary_project/pkg/log"
 	"ai_summary_project/pkg/zapgorm2"
 	"context"
@@ -100,6 +101,13 @@ func NewDB(conf *viper.Viper, l *log.Logger) *gorm.DB {
 
 	if err != nil {
 		panic(fmt.Sprintf("failed to connect to database: %v", err))
+	}
+
+	// ✅ 自动迁移数据库结构 (针对 TiDB 云端自动建表)
+	if err := db.AutoMigrate(&model.Book{}, &model.Course{}, &model.Users{}); err != nil {
+		l.Error("AutoMigrate error", zap.Error(err))
+	} else {
+		l.Info("AutoMigrate success")
 	}
 
 	// ✅ 设置连接池参数
